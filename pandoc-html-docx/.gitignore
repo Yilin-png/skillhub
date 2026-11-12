@@ -1,0 +1,5 @@
+__pycache__/
+*.pyc
+.build-*/
+*.failed.docx
+tests/out/
