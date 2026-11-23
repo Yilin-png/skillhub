@@ -60,7 +60,30 @@ class RendererTests(unittest.TestCase):
         self.assertEqual(len(greys), 2, "GP 与基金主体灰底")
         arrows = [l for l in root.iter(f"{SVG_NS}line") if l.get("marker-end")]
         self.assertEqual(len(arrows), 3)
-        self.assertEqual(root.get("width"), "1152")
+        self.assertEqual(root.get("viewBox"), f"0 0 {root.get('width')} {root.get('height')}")
+
+    def test_boxes_hug_text(self):
+        """方框四周只留 PAD：框宽 = 最长文字行 + 2×PAD_X（不小于 MIN_BOX_W）。"""
+        texts, root = svg_texts(fund_svg.render_svg(load_example("amac_sample.yaml")))
+        rects = list(root.iter(f"{SVG_NS}rect"))[1:]
+        text_els = list(root.iter(f"{SVG_NS}text"))
+        s = fund_svg.SCALE
+        for r in rects:
+            x, y, w, h = (float(r.get(k)) for k in ("x", "y", "width", "height"))
+            inside = [t for t in text_els
+                      if x < float(t.get("x")) < x + w and y < float(t.get("y")) < y + h]
+            self.assertTrue(inside)
+            fs = float(inside[0].get("font-size"))
+            text_w = max(fund_svg._text_em(t.text) for t in inside) * fs
+            expected = max(fund_svg.MIN_BOX_W * s, text_w + 2 * fund_svg.PAD_X * s)
+            self.assertAlmostEqual(w, expected, delta=1.0)
+            n = len(inside)
+            expected_h = ((n - 1) * fund_svg.LINE_SPACING + 1) * fs + 2 * fund_svg.PAD_Y * s
+            self.assertLessEqual(h, expected_h + 1.0)
+
+    def test_balanced_wrap(self):
+        lines = fund_svg._wrap("上海某某私募基金管理有限公司", 13)
+        self.assertEqual(lines, ["上海某某私募基", "金管理有限公司"])
 
     def test_multi_project_and_dense_partners(self):
         data = load_example("multi_project.yaml")
