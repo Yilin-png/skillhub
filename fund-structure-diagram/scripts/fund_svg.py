@@ -52,6 +52,7 @@ MIN_BOX_W = 1.0
 LINE_SPACING = 1.35
 PARTNER_MAX_W = 2.6
 ROW_GAP = 0.35         # 上一排认缴主线到下一排方框顶部
+LOOK_STEM = 0.15       # 穿透层认缴主线到被穿透方框顶部的距离
 FUND_MAX_W = 4.4
 SIDE_MAX_W = 3.3
 PROJECT_MAX_W, PROJECT_MAX_W_MULTI = 4.4, 3.0
@@ -120,6 +121,35 @@ def _is_gp(role: str) -> bool:
     return role in GP_ROLES or role.upper().startswith("GP")
 
 
+def _normalize_partners(items) -> list:
+    """规范化一层出资人，并递归处理未备案有限合伙的上层出资人。"""
+    partners = []
+    for p in items or []:
+        if isinstance(p, str):
+            p = {"name": p}
+        role = str(p.get("role") or "").strip()
+        highlight = p.get("highlight")
+        nested = _normalize_partners(p.get("partners"))
+        partners.append(
+            {
+                "name": str(p.get("name") or "").strip(),
+                "role": ROLE_TEXT.get(role.upper(), role),
+                "amount": _dec(p.get("amount")),
+                "ratio": _dec(p.get("ratio")),
+                "highlight": _is_gp(role) if highlight is None else bool(highlight),
+                # 写了上层出资人即视为需要穿透
+                "unregistered": bool(p.get("unregistered")) or bool(nested),
+                "partners": nested,
+            }
+        )
+    computed = compute_ratios([p["amount"] for p in partners])
+    if partners and all(p["amount"] is not None for p in partners):
+        for p, r in zip(partners, computed):
+            if p["ratio"] is None:
+                p["ratio"] = r
+    return partners
+
+
 def normalize(data: dict) -> dict:
     """补默认值、计算比例，返回渲染用的规范化结构。"""
     data = dict(data or {})
@@ -133,28 +163,7 @@ def normalize(data: dict) -> dict:
         "name": str(fund.get("name") or "基金").strip(),
         "form": str(fund.get("form") or "").strip(),
     }
-
-    partners = []
-    for p in data.get("partners") or []:
-        if isinstance(p, str):
-            p = {"name": p}
-        role = str(p.get("role") or "").strip()
-        highlight = p.get("highlight")
-        partners.append(
-            {
-                "name": str(p.get("name") or "").strip(),
-                "role": ROLE_TEXT.get(role.upper(), role),
-                "amount": _dec(p.get("amount")),
-                "ratio": _dec(p.get("ratio")),
-                "highlight": _is_gp(role) if highlight is None else bool(highlight),
-            }
-        )
-    computed = compute_ratios([p["amount"] for p in partners])
-    if all(p["amount"] is not None for p in partners):
-        for p, r in zip(partners, computed):
-            if p["ratio"] is None:
-                p["ratio"] = r
-    out["partners"] = partners
+    out["partners"] = _normalize_partners(data.get("partners"))
 
     def _side(key, title_word):
         side = data.get(key)
@@ -194,25 +203,36 @@ def normalize(data: dict) -> dict:
     return out
 
 
+def _check_level(partners, owner, msgs) -> None:
+    """校验一层出资人。owner 为空表示基金本层。"""
+    where = f"「{owner}」的上层出资人" if owner else "出资人"
+    for i, p in enumerate(partners, 1):
+        if not p["name"]:
+            msgs.append(f"{where}第 {i} 位缺少名称。")
+        if p["amount"] is None and p["ratio"] is None:
+            msgs.append(f"「{p['name'] or i}」既无认缴金额也无比例。")
+        if p["unregistered"] and not p["partners"]:
+            msgs.append(f"「{p['name']}」为未备案有限合伙企业，需列出其上层出资人。")
+        if p["partners"] and not any(k["highlight"] for k in p["partners"]):
+            msgs.append(f"「{p['name']}」的上层出资人未标注普通合伙人。")
+        _check_level(p["partners"], p["name"], msgs)
+    ratios = [p["ratio"] for p in partners if p["ratio"] is not None]
+    if partners and len(ratios) == len(partners):
+        total = sum(ratios)
+        if abs(total - 100) > Decimal("0.01"):
+            msgs.append(f"{where}认缴比例合计为 {total:.2f}%，不等于 100%。")
+
+
 def check(data: dict) -> list[str]:
     """返回提示信息列表（不阻止出图）。"""
     d = normalize(data)
     msgs = []
     if not d["partners"]:
         msgs.append("未填写任何出资人。")
-    for i, p in enumerate(d["partners"], 1):
-        if not p["name"]:
-            msgs.append(f"第 {i} 位出资人缺少名称。")
-        if p["amount"] is None and p["ratio"] is None:
-            msgs.append(f"「{p['name'] or i}」既无认缴金额也无比例。")
-    ratios = [p["ratio"] for p in d["partners"] if p["ratio"] is not None]
-    if ratios and len(ratios) == len(d["partners"]):
-        total = sum(ratios)
-        if abs(total - 100) > Decimal("0.01"):
-            msgs.append(f"认缴比例合计为 {total:.2f}%，不等于 100%。")
+    _check_level(d["partners"], "", msgs)
     roles = [p["role"] for p in d["partners"]]
     if "合伙" in d["fund"]["form"] and not any(_is_gp(r) for r in roles):
-        msgs.append("合伙型基金未标注 GP（普通合伙人）。")
+        msgs.append("合伙型基金未标注普通合伙人。")
     m = d["manager"]
     if m and m["code"] and not m["code"].upper().startswith("P"):
         msgs.append(f"管理人登记编码「{m['code']}」通常以 P 开头，请核对。")
@@ -405,25 +425,80 @@ def render_svg(data: dict) -> str:
         _, h = _block_size(labels, 9)
         return max(0.45, h + 0.3)
 
-    # 整体协调：出资人方框统一按最长的文字定尺寸，作为全图的基准框；
+    # 整体协调：出资人方框（含穿透层）统一按最长的文字定尺寸，作为全图的基准框；
     # 其余方框（基金、管理人、托管人、项目）都不小于基准框
-    p_boxes, p_labels = [], []
-    for p in partners:
-        text = p["name"] + (f"\n（{p['role']}）" if p["role"] else "")
-        p_boxes.append(_fit_box(text, 10, PARTNER_MAX_W))
+    def walk(nodes):
+        for p in nodes:
+            yield p
+            yield from walk(p["partners"])
+
+    all_nodes = list(walk(partners))
+
+    def node_label(p):
         label = []
         if d["show_ratio"] and p["ratio"] is not None:
             label.append(format_ratio(p["ratio"]))
         if d["show_amount"] and p["amount"] is not None:
             label.append(f"{format_amount(p['amount'])} {unit}".strip())
-        p_labels.append(label)
-    base_w = max((b[1] for b in p_boxes), default=MIN_BOX_W)
-    base_h = max((b[2] for b in p_boxes), default=_fit_box("基\n基", 10, PARTNER_MAX_W)[2])
-    p_boxes = [(lines, base_w, base_h) for lines, _, _ in p_boxes]
+        return label
+
+    for p in all_nodes:
+        text = p["name"] + (f"\n（{p['role']}）" if p["role"] else "")
+        p["_lines"] = _fit_box(text, 10, PARTNER_MAX_W)[0]
+        p["_label"] = node_label(p)
+    base_w = max((_fit_box("\n".join(p["_lines"]), 10, PARTNER_MAX_W)[1] for p in all_nodes), default=MIN_BOX_W)
+    base_h = max((_fit_box("\n".join(p["_lines"]), 10, PARTNER_MAX_W)[2] for p in all_nodes),
+                 default=_fit_box("基\n基", 10, PARTNER_MAX_W)[2])
+    p_boxes = [(p["_lines"], base_w, base_h) for p in partners]
     ph = base_h
 
+    conn = connector_len(["0", "0"])
+
+    def label_w_of(p):
+        return _block_size(p["_label"], 9)[0]
+
     def label_w(i):
-        return _block_size(p_labels[i], 9)[0]
+        return label_w_of(partners[i])
+
+    def span(nodes):
+        """一层出资人的中心横坐标（相对值）与左右外沿。"""
+        fps = [footprint(n) for n in nodes]
+        cs = [0.0]
+        for j in range(1, len(nodes)):
+            step = max(fps[j - 1] / 2 + BOX_GAP + fps[j] / 2, label_w_of(nodes[j]) + LABEL_GAP + 0.2)
+            cs.append(cs[-1] + step)
+        return cs, cs[0] - fps[0] / 2, cs[-1] + fps[-1] / 2
+
+    def footprint(node):
+        """方框连同其穿透层所占的宽度。"""
+        if not node["partners"]:
+            return base_w
+        _, left, right = span(node["partners"])
+        return max(base_w, right - left)
+
+    def upper_height(node):
+        """穿透层在方框顶部之上占用的高度。"""
+        if not node["partners"]:
+            return 0.0
+        return LOOK_STEM + conn + ph + max(upper_height(k) for k in node["partners"])
+
+    def draw_uppers(node, cx, box_top):
+        """在方框正上方画出其上层出资人，认缴主线接入方框顶部。"""
+        kids = node["partners"]
+        if not kids:
+            return
+        cs, left, right = span(kids)
+        cs = [x + cx - (left + right) / 2 for x in cs]
+        bus = box_top - LOOK_STEM
+        top = bus - conn - ph
+        for k, x in zip(kids, cs):
+            draw_uppers(k, x, top)
+            c.box(x - base_w / 2, top, base_w, ph, k["_lines"], 10, GREY if k["highlight"] else "white")
+            c.line(x, top + ph, x, bus)
+            if k["_label"]:
+                c.lines_block(x - LABEL_GAP, (top + ph + bus) / 2, k["_label"], 9, anchor="end")
+        c.line(min(min(cs), cx), bus, max(max(cs), cx), bus)
+        c.line(cx, bus, cx, box_top)
 
     # 超过 max_per_row 时均分为多排，每排各有一条认缴主线，由 x=0 处的竖线串起接入基金
     n = len(partners)
@@ -438,20 +513,20 @@ def render_svg(data: dict) -> str:
     def row_centers(idx, trunk_through):
         # 相邻竖线间距要同时容下两侧方框和竖线左侧的比例/金额标注
         cs = [0.0]
+        widths = [footprint(partners[i]) for i in idx]
         for j in range(1, len(idx)):
-            a, b = idx[j - 1], idx[j]
-            step = max(p_boxes[a][1] / 2 + BOX_GAP + p_boxes[b][1] / 2, label_w(b) + LABEL_GAP + 0.2)
+            step = max(widths[j - 1] / 2 + BOX_GAP + widths[j] / 2, label_w(idx[j]) + LABEL_GAP + 0.2)
             cs.append(cs[-1] + step)
         if not trunk_through:
-            left = cs[0] - p_boxes[idx[0]][1] / 2
-            right = cs[-1] + p_boxes[idx[-1]][1] / 2
+            left = cs[0] - widths[0] / 2
+            right = cs[-1] + widths[-1] / 2
             return [x - (left + right) / 2 for x in cs]
         # 竖线要穿过本排：把中间的空隙对准 x=0，且右侧方框的标注不能压到竖线
         k = len(idx)
         a = k // 2 - 1 if k % 2 == 0 else k // 2
-        wa = p_boxes[idx[a]][1]
+        wa = widths[a]
         if a + 1 < k:
-            wb = p_boxes[idx[a + 1]][1]
+            wb = widths[a + 1]
             gap_x = (cs[a] + wa / 2 + cs[a + 1] - wb / 2) / 2
         else:
             gap_x = cs[a] + wa / 2 + BOX_GAP / 2
@@ -464,20 +539,22 @@ def render_svg(data: dict) -> str:
 
     row_y = 0.0
     trunk_top = bus_y = row_y
-    conn = connector_len(["0", "0"])
     for r, idx in enumerate(rows):
+        above = max((upper_height(partners[i]) for i in idx), default=0.0)
+        if r:
+            row_y = bus_y + ROW_GAP + above
         cs = row_centers(idx, trunk_through=r > 0)
         bus_y = row_y + ph + conn
         for i, pcx in zip(idx, cs):
+            draw_uppers(partners[i], pcx, row_y)
             lines, w, _ = p_boxes[i]
             c.box(pcx - w / 2, row_y, w, ph, lines, 10, GREY if partners[i]["highlight"] else "white")
             c.line(pcx, row_y + ph, pcx, bus_y)
-            if p_labels[i]:
-                c.lines_block(pcx - LABEL_GAP, (row_y + ph + bus_y) / 2, p_labels[i], 9, anchor="end")
+            if partners[i]["_label"]:
+                c.lines_block(pcx - LABEL_GAP, (row_y + ph + bus_y) / 2, partners[i]["_label"], 9, anchor="end")
         c.line(min(cs[0], 0), bus_y, max(cs[-1], 0), bus_y)
         if r == 0:
             trunk_top = bus_y
-        row_y = bus_y + ROW_GAP
 
     # 基金主体 + 管理人 / 托管人
     fund_text = d["fund"]["name"] + (f"\n{d['fund']['form']}" if d["fund"]["form"] else "")
