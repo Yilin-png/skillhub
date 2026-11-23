@@ -1,4 +1,4 @@
-"""基金架构图 SVG 渲染器（纯标准库，可在 docassamble 内外共用）。
+"""基金架构图 SVG 渲染器（纯标准库）。
 
 版式复刻 matplotlib 参考稿：上排出资人方框 + 竖线汇入认缴主线，竖线左侧标认缴比例/金额；
 中排基金主体（灰底），左侧管理人「受托管理」箭头、右侧托管银行「资金托管」箭头；
@@ -9,7 +9,6 @@
 """
 from __future__ import annotations
 
-import json
 import unicodedata
 from decimal import ROUND_DOWN, Decimal, InvalidOperation
 from xml.sax.saxutils import escape
@@ -21,15 +20,13 @@ __all__ = [
     "format_amount",
     "format_ratio",
     "check",
-    "interview_to_data",
-    "to_json",
     "DEFAULTS",
 ]
 
 SCALE = 72
 GREY = "#d9d9d9"
 LINE_W = 1.1
-# 无宋体的环境（Linux 服务器、docassamble 容器）依次回退到思源宋体、再到任意中文字体
+# 无宋体的环境（如 Linux 服务器）依次回退到思源宋体、再到任意中文字体
 FONT_FAMILY = (
     "SimSun, 宋体, 'Songti SC', STSong, 'Noto Serif CJK SC', 'Source Han Serif SC', "
     "'Noto Sans CJK SC', 'Microsoft YaHei', 'WenQuanYi Micro Hei', serif"
@@ -215,54 +212,6 @@ def check(data: dict) -> list[str]:
     if m and m["code"] and not m["code"].upper().startswith("P"):
         msgs.append(f"管理人登记编码「{m['code']}」通常以 P 开头，请核对。")
     return msgs
-
-
-def interview_to_data(**kw) -> dict:
-    """把 docassamble 问答变量组装成渲染用 dict（列表元素为 DAObject）。"""
-    partners = []
-    for p in kw.get("partners") or []:
-        partners.append(
-            {
-                "name": p.name,
-                "role": getattr(p, "role", ""),
-                "amount": getattr(p, "amount", None),
-            }
-        )
-    projects = []
-    for p in kw.get("projects") or []:
-        projects.append(
-            {
-                "name": p.name,
-                "note": getattr(p, "note", "") or "",
-                "label": getattr(p, "label", "") or "",
-            }
-        )
-    data = {
-        "title": kw.get("title", DEFAULTS["title"]),
-        "unit": kw.get("unit", DEFAULTS["unit"]),
-        "fund": {"name": kw.get("fund_name", ""), "form": kw.get("fund_form_text", "")},
-        "partners": partners,
-        "projects": projects,
-        "project_label": kw.get("project_label", DEFAULTS["project_label"]),
-        "show_ratio": kw.get("show_ratio", True),
-        "show_amount": kw.get("show_amount", True),
-    }
-    if kw.get("has_manager"):
-        data["manager"] = {
-            "name": kw.get("manager_name", ""),
-            "code": kw.get("manager_code", "") or "",
-            "label": kw.get("manager_label") or DEFAULTS["manager_label"],
-        }
-    if kw.get("has_custodian"):
-        data["custodian"] = {
-            "name": kw.get("custodian_name", ""),
-            "label": kw.get("custodian_label") or DEFAULTS["custodian_label"],
-        }
-    return data
-
-
-def to_json(data: dict) -> str:
-    return json.dumps(data, ensure_ascii=False, indent=2, default=str)
 
 
 # ---------------------------------------------------------------- 文字度量

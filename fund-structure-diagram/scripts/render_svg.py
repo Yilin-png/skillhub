@@ -15,8 +15,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-HERE = Path(__file__).resolve().parent
-sys.path.insert(0, str(HERE.parent / "docassamble-fundstructure" / "docassamble" / "fundstructure"))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import fund_svg  # noqa: E402
 
@@ -46,7 +45,7 @@ def to_png(svg_path: Path, png_path: Path, dpi: int) -> None:
 
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("data", type=Path, help="JSON 或 YAML 数据文件（docassamble 问答导出的 JSON 亦可）")
+    ap.add_argument("data", type=Path, help="JSON 或 YAML 数据文件")
     ap.add_argument("-o", "--output", type=Path, help="输出 SVG 路径（默认与数据文件同名 .svg）")
     ap.add_argument("--png", type=Path, help="同时导出 PNG")
     ap.add_argument("--dpi", type=int, default=300, help="PNG 分辨率，默认 300")

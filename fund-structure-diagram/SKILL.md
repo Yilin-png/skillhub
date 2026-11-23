@@ -1,25 +1,20 @@
 ---
 name: fund-structure-diagram
 description: >-
-  通过 docassamble 问答（或对话中的同一套问题）收集基金主体、GP/LP 认缴金额、管理人登记编码、
-  托管银行、底层项目，生成中基协备案风格的基金架构图 SVG（宋体、黑色细线、GP 与基金灰底、
-  认缴比例自动计算且合计 100%）。触发词：基金架构图、基金结构图、私募基金架构、备案架构图、
-  GP/LP 出资结构图、docassamble 基金问答、fund structure diagram。
+  在对话中按固定问题清单收集基金主体、GP/LP 认缴金额、管理人登记编码、托管银行、底层项目，
+  生成中基协备案风格的基金架构图 SVG（宋体、黑色细线、GP 与基金灰底、认缴比例自动计算且合计 100%）。
+  触发词：基金架构图、基金结构图、私募基金架构、备案架构图、GP/LP 出资结构图、fund structure diagram。
 ---
 
-# 基金架构图（docassamble 问答 → SVG）
+# 基金架构图（对话问答 → SVG）
 
 ## 组成
 
 ```text
 fund-structure-diagram/
-├── docassamble-fundstructure/          # 可直接安装到 docassamble 的包
-│   ├── setup.py
-│   └── docassamble/fundstructure/
-│       ├── fund_svg.py                 # 渲染器（纯标准库；问答与命令行共用，唯一实现）
-│       └── data/questions/fund_structure.yml   # 问答
+├── scripts/fund_svg.py                 # 渲染器（纯标准库）
 ├── scripts/render_svg.py               # 命令行：YAML/JSON → SVG（可选 PNG）
-├── files/questions.md                  # 问答清单 + 数据格式（对话模式用）
+├── files/questions.md                  # 问答清单 + 数据格式
 ├── examples/amac_sample.yaml / .svg    # 复刻参考稿
 ├── examples/multi_project.yaml / .svg  # 7 位出资人、3 个项目、无托管
 └── tests/run_tests.py
@@ -40,36 +35,20 @@ fund-structure-diagram/
 ## 工作流
 
 ```text
-- [ ] 1. 判断模式：用户有 docassamble 服务器 → 模式 A；否则 → 模式 B
-- [ ] 2. 收集答案（问答清单见 files/questions.md）
+- [ ] 1. 按 files/questions.md 在对话中提问（用户已给的材料先提取，不重复问；比例不问，自动算）
+- [ ] 2. 把答案写成 YAML（格式见 files/questions.md 或 examples/amac_sample.yaml）
 - [ ] 3. 出图：SVG（需要时加 PNG）
-- [ ] 4. 核对提示：比例合计、GP 是否缺失、登记编码格式
-- [ ] 5. 交付 SVG（+ JSON 数据，便于以后改图）
+- [ ] 4. 终端里的「提示：…」逐条转告用户确认（不阻止出图）
+- [ ] 5. 交付 SVG（+ YAML 数据，便于以后改图）
 ```
 
-### 模式 A：docassamble 问答
-
-1. 安装包（任选其一）：
-   - **Playground**：把 `fund_svg.py` 放到 Modules，把 `fund_structure.yml` 放到 Questions，直接运行；
-   - **Package Management**：上传 `docassamble-fundstructure` 的 zip（`cd fund-structure-diagram && zip -r docassamble-fundstructure.zip docassamble-fundstructure`），或填 GitHub 地址 + 子目录安装。
-2. 打开：`https://<服务器>/interview?i=docassamble.fundstructure:data/questions/fund_structure.yml`
-3. 问答流程：基金类型/标题/单位 → 基金名称与组织形式 → 逐个出资人（合伙型选 GP/LP，其他类型不问身份）→ 管理人（登记编码不以 P 开头会拦截）→ 托管人 → 底层项目 → 结果页。
-4. 结果页：内嵌预览、「下载 SVG」「下载 JSON 数据」「修改答案」（复查页可改任一屏，出资人/项目表格可编辑、删除、追加，返回后自动重新出图）。
-5. 用户下载的 JSON 可用模式 B 的命令重新出图、导出 PNG 或手工微调。
-
-### 模式 B：对话问答 + 命令行
-
-1. 按 `files/questions.md` 的顺序在对话中提问（已知信息不重复问；比例不问，自动算）。
-2. 把答案写成 YAML（格式见 `files/questions.md` 或 `examples/amac_sample.yaml`）。
-3. 出图：
+用户说「用示例」时直接用 `examples/amac_sample.yaml`；要「随机示例」时按同一格式编造虚构名称与金额。
 
 ```bash
 python scripts/render_svg.py fund.yaml -o fund.svg
 python scripts/render_svg.py fund.yaml -o fund.svg --png fund.png --dpi 300   # PNG 需 cairosvg 或 rsvg-convert
-python scripts/render_svg.py fund_structure.json --check                     # 只校验
+python scripts/render_svg.py fund.yaml --check                               # 只校验
 ```
-
-4. 终端里的「提示：…」逐条转告用户确认（不阻止出图）。
 
 ## 校验规则（`fund_svg.check`）
 
@@ -82,9 +61,8 @@ python scripts/render_svg.py fund_structure.json --check                     # �
 
 ## 修改与测试
 
-- 版式常量集中在 `fund_svg.py` 顶部（方框尺寸、间距、灰度、线宽、字体栈）；改动后重新生成两个示例 SVG 并目视比对。
-- 问答与命令行共用同一个 `fund_svg.py`，不要复制出第二份实现。新增给问答用的函数要加进 `__all__`（docassamble 的 `modules:` 只导入 `__all__` 中的名称）。
-- 回归测试：`python tests/run_tests.py`（渲染器、比例算法、问答 YAML 块结构、code 块与 Mako 模板编译、用模拟 DAList/DAFile 跑出图代码块）。测试不启动真实 docassamble 服务，首次部署后仍需在服务器上走一遍问答。
+- 版式常量集中在 `scripts/fund_svg.py` 顶部（方框尺寸、间距、灰度、线宽、字体栈）；改动后重新生成两个示例 SVG 并目视比对。
+- 回归测试：`python tests/run_tests.py`（比例算法、金额格式、SVG 结构与布局分支、命令行出图与校验）。
 
 ## 常见问题
 
