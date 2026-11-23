@@ -86,6 +86,12 @@ class RendererTests(unittest.TestCase):
         self.assertIn("（普通合伙人）", texts)
         self.assertIn("（有限合伙人）", texts)
         self.assertNotIn("（GP）", texts)
+        # 管理人 / 托管人：名称在上，性质加括号放在名称下方
+        i = texts.index("G 公司")
+        self.assertEqual(texts[i + 1:i + 3], ["（基金管理人）", "登记编码：P1000000"])
+        j = texts.index("H 银行")
+        self.assertEqual(texts[j + 1], "（托管银行）")
+        self.assertNotIn("基金管理人", texts)
         family = root.get("font-family")
         for sans in ("Sans", "Hei", "YaHei"):
             self.assertNotIn(sans, family)

@@ -485,7 +485,8 @@ def render_svg(data: dict) -> str:
     fund_w = max(fund_w, base_w)
 
     def side_box(side):
-        text = f"{side['title']}\n{side['name']}" if side["title"] else side["name"]
+        # 与出资人一致：主体名称在上，性质加括号放在名称下方
+        text = side["name"] + (f"\n（{side['title']}）" if side["title"] else "")
         if side["code"]:
             text += f"\n登记编码：{side['code']}"
         lines, w, h = _fit_box(text, 10, SIDE_MAX_W)
