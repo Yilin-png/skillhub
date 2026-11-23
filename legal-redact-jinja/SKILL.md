@@ -5,6 +5,8 @@ description: >-
   private variable files, or when regenerating an agreement from templated
   parties. Prefer legal-relationship modeling: map parties/roles/instruments
   first, then nest Jinja paths so variables mirror the transaction graph.
+  Iron rule: prefer local-deployed models (Mac Mini Ollama) for source text and
+  private vars; cloud is allowed only as an explicit fallback after local.
 ---
 # Legal redaction to Jinja2
 
@@ -12,6 +14,16 @@ description: >-
 Turn a Chinese legal Word/text file into a reusable Jinja2 template plus a private vars file. Keep real identities off shared templates.
 
 核心不只是「把专有名词换成占位符」，而是用**法律思维**建一张可复用的**主体关系图**，再落到嵌套 Jinja 路径：谁对谁、以什么身份、就什么标的、通过什么载体。
+
+## 铁律：优先本地部署模型
+
+涉及原文、实体抽取、关系建模、变量升格、抽检辅助时：
+
+1. **优先且默认**使用 Mac Mini 上本地部署的模型（Ollama），在本地完成读源、推理与写回。
+2. **不是完全禁止云端**：本地不可用、效果明显不足、或用户明确要求时，可以改用云端模型，但须先尝试本地，并告知用户将使用云端及范围。
+3. 走云端时尽量缩小出境面：优先已脱敏模板 / 片段、角色与路径结构；整份源文或完整 `*.vars.yaml` 仅在确有必要时发送，并经用户确认。
+4. 默认交付路径不变：对外只给 Jinja 模板与 `*.vars.example.yaml`；私有 vars 仍留本机，除非用户明确要求另存。
+5. 无论本地或云端，交付前仍须人工复核；模型会漏检，铁律管的是**优先本地**，不是免检。
 
 ## Legal relationship modeling（先于命名）
 
@@ -98,8 +110,8 @@ Fallback 计数器（`companies.company01` 等）**仅用于**关系图仍无法
 - Preserve unless asked otherwise: amounts, dates, ratios, durations, statute citations, clause structure, generic legal terms (转让方/受让方/标的公司 as role words, 有限责任公司, 股份有限公司, etc.).
 - Same real entity → same Jinja path across the whole document.
 - Prefer semantic, **relationship-nested** paths (见上)；计数器仅作 fallback。
-- Do not send source text or `*.vars.yaml` to cloud models. Use the Mac Mini local Ollama model when entity assist is needed.
-- Never attach or paste the private vars file into chat; only the template and `*.vars.example.yaml`.
+- **铁律**：实体辅助与原文处理**优先**本地 Ollama；云端可作明确兜底（详见上节），非整禁。
+- Never attach or paste the private vars file into chat by default; only the template and `*.vars.example.yaml`（除非用户明确要求提供私有 vars）。
 
 ## Toolkit location
 On the home Mac Mini:
@@ -109,8 +121,8 @@ On the home Mac Mini:
 - `render_jinja.py` — template + vars → filled text (round-trip check)
 
 ## Steps
-1. Save the source docx/txt into a working folder on the Mac Mini.
-2. **先建模再跑脚本**：写出文书类型、角色清单、主体关系草图（可记在 `inventory` 备注或本地笔记）；决定语义路径骨架。
+1. Save the source docx/txt into a working folder on the Mac Mini（默认留本机；升云端须符合铁律）。
+2. **先建模再跑脚本**：写出文书类型、角色清单、主体关系草图（可记在 `inventory` 备注或本地笔记）；决定语义路径骨架。需要模型辅助时**先用本地 Ollama**；不足再按铁律升云端。
 3. Run:
    `python3 ~/Documents/redact-trial/toolkit/redact_to_jinja.py --input <source.docx> --rules ~/Documents/redact-trial/toolkit/rules.yaml --out-dir <out> --stem <name>`
 4. Outputs:
