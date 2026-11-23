@@ -26,12 +26,13 @@ __all__ = [
 SCALE = 72
 GREY = "#d9d9d9"
 LINE_W = 1.1
-# 无宋体的环境（如 Linux 服务器）依次回退到思源宋体、再到任意中文字体
+# 全部文字用宋体：Windows 宋体 → macOS 宋体 → 思源宋体；不回退到黑体类字体
 FONT_FAMILY = (
-    "SimSun, 宋体, 'Songti SC', STSong, 'Noto Serif CJK SC', 'Source Han Serif SC', "
-    "'Noto Sans CJK SC', 'Microsoft YaHei', 'WenQuanYi Micro Hei', serif"
+    "SimSun, 宋体, NSimSun, 'Songti SC', STSong, 'Noto Serif CJK SC', "
+    "'Source Han Serif SC', 'Noto Serif SC', serif"
 )
 GP_ROLES = {"GP", "普通合伙人", "执行事务合伙人", "普通合伙人（GP）"}
+ROLE_TEXT = {"GP": "普通合伙人", "LP": "有限合伙人"}
 
 DEFAULTS = {
     "title": "中基协备案基金架构图（示例）",
@@ -142,7 +143,7 @@ def normalize(data: dict) -> dict:
         partners.append(
             {
                 "name": str(p.get("name") or "").strip(),
-                "role": role,
+                "role": ROLE_TEXT.get(role.upper(), role),
                 "amount": _dec(p.get("amount")),
                 "ratio": _dec(p.get("ratio")),
                 "highlight": _is_gp(role) if highlight is None else bool(highlight),
@@ -404,7 +405,8 @@ def render_svg(data: dict) -> str:
         _, h = _block_size(labels, 9)
         return max(0.45, h + 0.3)
 
-    # 出资人：每个方框宽度按文字自适应，统一高度
+    # 整体协调：出资人方框统一按最长的文字定尺寸，作为全图的基准框；
+    # 其余方框（基金、管理人、托管人、项目）都不小于基准框
     p_boxes, p_labels = [], []
     for p in partners:
         text = p["name"] + (f"\n（{p['role']}）" if p["role"] else "")
@@ -415,7 +417,10 @@ def render_svg(data: dict) -> str:
         if d["show_amount"] and p["amount"] is not None:
             label.append(f"{format_amount(p['amount'])} {unit}".strip())
         p_labels.append(label)
-    ph = max((b[2] for b in p_boxes), default=0)
+    base_w = max((b[1] for b in p_boxes), default=MIN_BOX_W)
+    base_h = max((b[2] for b in p_boxes), default=_fit_box("基\n基", 10, PARTNER_MAX_W)[2])
+    p_boxes = [(lines, base_w, base_h) for lines, _, _ in p_boxes]
+    ph = base_h
 
     def label_w(i):
         return _block_size(p_labels[i], 9)[0]
@@ -477,20 +482,26 @@ def render_svg(data: dict) -> str:
     # 基金主体 + 管理人 / 托管人
     fund_text = d["fund"]["name"] + (f"\n{d['fund']['form']}" if d["fund"]["form"] else "")
     fund_lines, fund_w, fund_h = _fit_box(fund_text, 11, FUND_MAX_W)
+    fund_w = max(fund_w, base_w)
 
     def side_box(side):
         text = f"{side['title']}\n{side['name']}" if side["title"] else side["name"]
         if side["code"]:
             text += f"\n登记编码：{side['code']}"
-        return _fit_box(text, 10, SIDE_MAX_W)
+        lines, w, h = _fit_box(text, 10, SIDE_MAX_W)
+        return lines, max(w, base_w), h
 
     def side_gap(label):
         return max(0.9, _text_em(label or "") * em9 + 0.5)
 
     m_box = side_box(manager) if manager else None
     c_box = side_box(custodian) if custodian else None
-    mid_h = max([fund_h] + [b[2] for b in (m_box, c_box) if b])
-    fund_top = (bus_y + BUS_TO_FUND if rows else 0.0) + (mid_h - fund_h) / 2
+    # 中排三个方框同高
+    mid_h = max([fund_h, base_h] + [b[2] for b in (m_box, c_box) if b])
+    fund_h = mid_h
+    m_box = m_box and (m_box[0], m_box[1], mid_h)
+    c_box = c_box and (c_box[0], c_box[1], mid_h)
+    fund_top = bus_y + BUS_TO_FUND if rows else 0.0
     fcy = fund_top + fund_h / 2
     fund_x = -fund_w / 2
     if rows:
@@ -521,7 +532,9 @@ def render_svg(data: dict) -> str:
     k = len(projects)
     prmax = PROJECT_MAX_W if k <= 1 else PROJECT_MAX_W_MULTI
     pr_boxes = [_fit_box(p["name"] + (f"\n{p['note']}" if p["note"] else ""), 10, prmax) for p in projects]
-    pr_h = max((b[2] for b in pr_boxes), default=0)
+    pr_w = max([base_w] + [b[1] for b in pr_boxes])
+    pr_h = max([base_h] + [b[2] for b in pr_boxes])
+    pr_boxes = [(lines, pr_w, pr_h) for lines, _, _ in pr_boxes]
     if k == 1:
         p = projects[0]
         lines, w, _ = pr_boxes[0]

@@ -54,7 +54,7 @@ class RendererTests(unittest.TestCase):
         self.assertEqual(fund_svg.check(data), [])
         texts, root = svg_texts(fund_svg.render_svg(data))
         for expected in ["中基协备案基金架构图（示例）", "1.00%", "500 万元", "40.00%", "20,000 万元",
-                         "（GP）", "受托管理", "资金托管", "项目投资", "登记编码：P1000000", "底层项目"]:
+                         "（普通合伙人）", "受托管理", "资金托管", "项目投资", "登记编码：P1000000", "底层项目"]:
             self.assertIn(expected, texts)
         greys = [r for r in root.iter(f"{SVG_NS}rect") if r.get("fill") == fund_svg.GREY]
         self.assertEqual(len(greys), 2, "GP 与基金主体灰底")
@@ -62,24 +62,34 @@ class RendererTests(unittest.TestCase):
         self.assertEqual(len(arrows), 3)
         self.assertEqual(root.get("viewBox"), f"0 0 {root.get('width')} {root.get('height')}")
 
-    def test_boxes_hug_text(self):
-        """方框四周只留 PAD：框宽 = 最长文字行 + 2×PAD_X（不小于 MIN_BOX_W）。"""
+    def test_boxes_harmonized(self):
+        """出资人方框同宽同高、以最长文字 + PAD 为准；其余方框不小于它；中排三框同高。"""
         texts, root = svg_texts(fund_svg.render_svg(load_example("amac_sample.yaml")))
-        rects = list(root.iter(f"{SVG_NS}rect"))[1:]
-        text_els = list(root.iter(f"{SVG_NS}text"))
+        rects = [tuple(float(r.get(k)) for k in ("x", "y", "width", "height"))
+                 for r in list(root.iter(f"{SVG_NS}rect"))[1:]]
+        partners, (fund, manager, custodian, project) = rects[:5], rects[5:]
+        self.assertEqual({(w, h) for _, _, w, h in partners}, {partners[0][2:]})
+        base_w, base_h = partners[0][2:]
+
         s = fund_svg.SCALE
-        for r in rects:
-            x, y, w, h = (float(r.get(k)) for k in ("x", "y", "width", "height"))
-            inside = [t for t in text_els
-                      if x < float(t.get("x")) < x + w and y < float(t.get("y")) < y + h]
-            self.assertTrue(inside)
-            fs = float(inside[0].get("font-size"))
-            text_w = max(fund_svg._text_em(t.text) for t in inside) * fs
-            expected = max(fund_svg.MIN_BOX_W * s, text_w + 2 * fund_svg.PAD_X * s)
-            self.assertAlmostEqual(w, expected, delta=1.0)
-            n = len(inside)
-            expected_h = ((n - 1) * fund_svg.LINE_SPACING + 1) * fs + 2 * fund_svg.PAD_Y * s
-            self.assertLessEqual(h, expected_h + 1.0)
+        widest = max(fund_svg._text_em(t) for t in texts if t in ("A 合伙企业", "（普通合伙人）", "（有限合伙人）"))
+        self.assertAlmostEqual(base_w, widest * 10 + 2 * fund_svg.PAD_X * s, delta=1.0)
+
+        for _, _, w, h in (fund, manager, custodian, project):
+            self.assertGreaterEqual(w, base_w - 0.01)
+            self.assertGreaterEqual(h, base_h - 0.01)
+        self.assertEqual(fund[3], manager[3])
+        self.assertEqual(fund[3], custodian[3])
+
+    def test_role_text_and_songti_only(self):
+        texts, root = svg_texts(fund_svg.render_svg(load_example("amac_sample.yaml")))
+        self.assertIn("（普通合伙人）", texts)
+        self.assertIn("（有限合伙人）", texts)
+        self.assertNotIn("（GP）", texts)
+        family = root.get("font-family")
+        for sans in ("Sans", "Hei", "YaHei"):
+            self.assertNotIn(sans, family)
+        self.assertTrue(family.startswith("SimSun"))
 
     def test_given_ratio_precision_kept(self):
         self.assertEqual(fund_svg.format_ratio("0.61069%"), "0.61069%")
