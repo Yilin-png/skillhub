@@ -41,6 +41,7 @@ DEFAULTS = {
     "project_label": "项目投资",
     "show_ratio": True,
     "show_amount": True,
+    "max_per_row": 6,  # 每排出资人上限，超出自动分排
 }
 
 # 版式常量（单位：英寸）。方框按文字自适应：尺寸 = 文字外接框 + PAD；*_MAX_W 只用于决定何时换行
@@ -48,7 +49,8 @@ MARGIN = 0.4
 PAD_X, PAD_Y = 0.16, 0.12
 MIN_BOX_W = 1.0
 LINE_SPACING = 1.35
-PARTNER_MAX_W, PARTNER_MAX_W_DENSE = 2.6, 2.2
+PARTNER_MAX_W = 2.6
+ROW_GAP = 0.35         # 上一排认缴主线到下一排方框顶部
 FUND_MAX_W = 4.4
 SIDE_MAX_W = 3.3
 PROJECT_MAX_W, PROJECT_MAX_W_MULTI = 4.4, 3.0
@@ -87,9 +89,12 @@ def format_amount(value) -> str:
 
 
 def format_ratio(value) -> str:
+    """至少两位小数；用户给定的比例更精确时（如 0.61069%）保留原精度。"""
     d = _dec(value)
     if d is None:
         return ""
+    if d.as_tuple().exponent < -2:
+        return f"{d}%"
     return f"{d.quantize(Decimal('0.01')):.2f}%"
 
 
@@ -399,12 +404,11 @@ def render_svg(data: dict) -> str:
         _, h = _block_size(labels, 9)
         return max(0.45, h + 0.3)
 
-    # 出资人：每个方框宽度按文字自适应，同排统一高度
-    pmax = PARTNER_MAX_W_DENSE if len(partners) > 6 else PARTNER_MAX_W
+    # 出资人：每个方框宽度按文字自适应，统一高度
     p_boxes, p_labels = [], []
     for p in partners:
         text = p["name"] + (f"\n（{p['role']}）" if p["role"] else "")
-        p_boxes.append(_fit_box(text, 10, pmax))
+        p_boxes.append(_fit_box(text, 10, PARTNER_MAX_W))
         label = []
         if d["show_ratio"] and p["ratio"] is not None:
             label.append(format_ratio(p["ratio"]))
@@ -413,31 +417,62 @@ def render_svg(data: dict) -> str:
         p_labels.append(label)
     ph = max((b[2] for b in p_boxes), default=0)
 
-    # 相邻竖线间距要同时容下两侧方框和竖线左侧的比例/金额标注
-    centers = []
-    for i, (_, w, _) in enumerate(p_boxes):
-        if not centers:
-            centers.append(0.0)
-            continue
-        prev_w = p_boxes[i - 1][1]
-        label_w = _block_size(p_labels[i], 9)[0]
-        step = max(prev_w / 2 + BOX_GAP + w / 2, label_w + LABEL_GAP + 0.2)
-        centers.append(centers[-1] + step)
-    if centers:
-        row_left = centers[0] - p_boxes[0][1] / 2
-        row_right = centers[-1] + p_boxes[-1][1] / 2
-        shift = -(row_left + row_right) / 2
-        centers = [x + shift for x in centers]
+    def label_w(i):
+        return _block_size(p_labels[i], 9)[0]
 
-    top_y = 0.0
-    bus_y = top_y + ph + connector_len(["0", "0"])
-    for p, (lines, w, _), pcx, label in zip(partners, p_boxes, centers, p_labels):
-        c.box(pcx - w / 2, top_y, w, ph, lines, 10, GREY if p["highlight"] else "white")
-        c.line(pcx, top_y + ph, pcx, bus_y)
-        if label:
-            c.lines_block(pcx - LABEL_GAP, (top_y + ph + bus_y) / 2, label, 9, anchor="end")
-    if centers:
-        c.line(min(centers[0], 0), bus_y, max(centers[-1], 0), bus_y)
+    # 超过 max_per_row 时均分为多排，每排各有一条认缴主线，由 x=0 处的竖线串起接入基金
+    n = len(partners)
+    per_row = max(1, int(d["max_per_row"]))
+    n_rows = -(-n // per_row) if n else 0
+    rows, start = [], 0
+    for r in range(n_rows):
+        cnt = n // n_rows + (1 if r < n % n_rows else 0)
+        rows.append(list(range(start, start + cnt)))
+        start += cnt
+
+    def row_centers(idx, trunk_through):
+        # 相邻竖线间距要同时容下两侧方框和竖线左侧的比例/金额标注
+        cs = [0.0]
+        for j in range(1, len(idx)):
+            a, b = idx[j - 1], idx[j]
+            step = max(p_boxes[a][1] / 2 + BOX_GAP + p_boxes[b][1] / 2, label_w(b) + LABEL_GAP + 0.2)
+            cs.append(cs[-1] + step)
+        if not trunk_through:
+            left = cs[0] - p_boxes[idx[0]][1] / 2
+            right = cs[-1] + p_boxes[idx[-1]][1] / 2
+            return [x - (left + right) / 2 for x in cs]
+        # 竖线要穿过本排：把中间的空隙对准 x=0，且右侧方框的标注不能压到竖线
+        k = len(idx)
+        a = k // 2 - 1 if k % 2 == 0 else k // 2
+        wa = p_boxes[idx[a]][1]
+        if a + 1 < k:
+            wb = p_boxes[idx[a + 1]][1]
+            gap_x = (cs[a] + wa / 2 + cs[a + 1] - wb / 2) / 2
+        else:
+            gap_x = cs[a] + wa / 2 + BOX_GAP / 2
+        cs = [x - gap_x for x in cs]
+        if a + 1 < k:
+            need = label_w(idx[a + 1]) + LABEL_GAP + 0.15 - cs[a + 1]
+            if need > 0:
+                cs = cs[: a + 1] + [x + need for x in cs[a + 1:]]
+        return cs
+
+    row_y = 0.0
+    trunk_top = bus_y = row_y
+    conn = connector_len(["0", "0"])
+    for r, idx in enumerate(rows):
+        cs = row_centers(idx, trunk_through=r > 0)
+        bus_y = row_y + ph + conn
+        for i, pcx in zip(idx, cs):
+            lines, w, _ = p_boxes[i]
+            c.box(pcx - w / 2, row_y, w, ph, lines, 10, GREY if partners[i]["highlight"] else "white")
+            c.line(pcx, row_y + ph, pcx, bus_y)
+            if p_labels[i]:
+                c.lines_block(pcx - LABEL_GAP, (row_y + ph + bus_y) / 2, p_labels[i], 9, anchor="end")
+        c.line(min(cs[0], 0), bus_y, max(cs[-1], 0), bus_y)
+        if r == 0:
+            trunk_top = bus_y
+        row_y = bus_y + ROW_GAP
 
     # 基金主体 + 管理人 / 托管人
     fund_text = d["fund"]["name"] + (f"\n{d['fund']['form']}" if d["fund"]["form"] else "")
@@ -455,11 +490,11 @@ def render_svg(data: dict) -> str:
     m_box = side_box(manager) if manager else None
     c_box = side_box(custodian) if custodian else None
     mid_h = max([fund_h] + [b[2] for b in (m_box, c_box) if b])
-    fund_top = (bus_y + BUS_TO_FUND if centers else top_y) + (mid_h - fund_h) / 2
+    fund_top = (bus_y + BUS_TO_FUND if rows else 0.0) + (mid_h - fund_h) / 2
     fcy = fund_top + fund_h / 2
     fund_x = -fund_w / 2
-    if centers:
-        c.line(0, bus_y, 0, fund_top)
+    if rows:
+        c.line(0, trunk_top, 0, fund_top)
     c.box(fund_x, fund_top, fund_w, fund_h, fund_lines, 11, GREY)
 
     if manager:

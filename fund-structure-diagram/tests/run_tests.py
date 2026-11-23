@@ -81,6 +81,24 @@ class RendererTests(unittest.TestCase):
             expected_h = ((n - 1) * fund_svg.LINE_SPACING + 1) * fs + 2 * fund_svg.PAD_Y * s
             self.assertLessEqual(h, expected_h + 1.0)
 
+    def test_given_ratio_precision_kept(self):
+        self.assertEqual(fund_svg.format_ratio("0.61069%"), "0.61069%")
+        self.assertEqual(fund_svg.format_ratio("6.1"), "6.10%")
+
+    def test_many_partners_split_rows_and_trunk_clear(self):
+        partners = [{"name": f"第{i}号有限公司", "role": "LP", "amount": 100} for i in range(13)]
+        texts, root = svg_texts(fund_svg.render_svg({"fund": "F", "partners": partners, "projects": []}))
+        rects = list(root.iter(f"{SVG_NS}rect"))[1:]
+        rows = sorted({r.get("y") for r in rects[:-1]}, key=float)
+        self.assertEqual(len(rows), 3)  # 13 位、每排至多 6 位 → 5/4/4
+        # 竖向主干（x = 基金中心）不得穿过任何出资人方框
+        fund = rects[-1]
+        trunk_x = float(fund.get("x")) + float(fund.get("width")) / 2
+        for r in rects[:-1]:
+            x, w = float(r.get("x")), float(r.get("width"))
+            if r.get("y") != rows[0]:
+                self.assertFalse(x < trunk_x < x + w, "主干穿过了方框")
+
     def test_balanced_wrap(self):
         lines = fund_svg._wrap("上海某某私募基金管理有限公司", 13)
         self.assertEqual(lines, ["上海某某私募基", "金管理有限公司"])
