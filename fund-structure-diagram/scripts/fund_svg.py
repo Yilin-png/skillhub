@@ -43,20 +43,19 @@ DEFAULTS = {
     "show_amount": True,
 }
 
-# 版式常量（单位：英寸），取自参考稿
-MARGIN = 0.5
-PARTNER_W, PARTNER_H, PARTNER_GAP = 2.6, 1.35, 0.5
-PARTNER_W_DENSE, PARTNER_GAP_DENSE = 2.2, 0.4
-BOX_TO_BUS = 1.05
-BUS_TO_FUND = 1.1
-FUND_W, FUND_H = 4.4, 1.2
-SIDE_W, MANAGER_H, CUSTODIAN_H = 3.3, 1.35, 1.1
-SIDE_GAP = 1.6
-FUND_TO_PROJECT = 1.65
-PROJECT_W, PROJECT_H = 4.4, 1.15
-PROJECT_W_MULTI, PROJECT_GAP = 3.0, 0.5
-PAD_X, PAD_Y = 0.12, 0.18
+# 版式常量（单位：英寸）。方框按文字自适应：尺寸 = 文字外接框 + PAD；*_MAX_W 只用于决定何时换行
+MARGIN = 0.4
+PAD_X, PAD_Y = 0.16, 0.12
+MIN_BOX_W = 1.0
 LINE_SPACING = 1.35
+PARTNER_MAX_W, PARTNER_MAX_W_DENSE = 2.6, 2.2
+FUND_MAX_W = 4.4
+SIDE_MAX_W = 3.3
+PROJECT_MAX_W, PROJECT_MAX_W_MULTI = 4.4, 3.0
+BOX_GAP = 0.4          # 同排相邻方框的最小间距
+LABEL_GAP = 0.08       # 标注文字与连线的距离
+BUS_TO_FUND = 0.6
+TITLE_GAP = 0.45
 
 
 # ---------------------------------------------------------------- 数据处理
@@ -235,18 +234,28 @@ def _text_em(text: str) -> float:
     return sum(_char_em(c) for c in text)
 
 
+def _greedy(para: str, limit: float) -> list[str]:
+    lines, cur, width = [], "", 0.0
+    for ch in para:
+        w = _char_em(ch)
+        if cur and width + w > limit and ch not in NO_LINE_START:
+            lines.append(cur)
+            cur, width = "", 0.0
+        cur += ch
+        width += w
+    lines.append(cur)
+    return lines
+
+
 def _wrap(text: str, max_em: float) -> list[str]:
+    """均衡换行：行数取最少，各行长度尽量相等，避免末行只剩一两个字。"""
     lines = []
     for para in str(text).split("\n"):
-        cur, width = "", 0.0
-        for ch in para:
-            w = _char_em(ch)
-            if cur and width + w > max_em and ch not in NO_LINE_START:
-                lines.append(cur)
-                cur, width = "", 0.0
-            cur += ch
-            width += w
-        lines.append(cur)
+        n = len(_greedy(para, max_em))
+        limit = _text_em(para) / n
+        while limit < max_em and len(_greedy(para, limit)) > n:
+            limit += 0.25
+        lines.extend(_greedy(para, min(limit, max_em)))
     return lines
 
 
@@ -254,8 +263,18 @@ def _em(fs: float) -> float:
     return fs / SCALE
 
 
-def _box_height(lines, fs, min_h):
-    return max(min_h, len(lines) * _em(fs) * LINE_SPACING + 2 * PAD_Y)
+def _block_size(lines, fs):
+    """多行文字的外接框（宽, 高）。"""
+    width = max((_text_em(s) for s in lines), default=0) * _em(fs)
+    height = ((len(lines) - 1) * LINE_SPACING + 1) * _em(fs) if lines else 0
+    return width, height
+
+
+def _fit_box(text, fs, max_w):
+    """按最大宽度换行，返回 (行列表, 方框宽, 方框高)。"""
+    lines = _wrap(text, (max_w - 2 * PAD_X) / _em(fs))
+    tw, th = _block_size(lines, fs)
+    return lines, max(MIN_BOX_W, tw + 2 * PAD_X), th + 2 * PAD_Y
 
 
 # ---------------------------------------------------------------- 图元
@@ -286,11 +305,41 @@ class _Canvas:
         self.lines_block(x + w / 2, y + h / 2, lines, fs)
         return x + w / 2, y + h / 2
 
-    def to_svg(self, width, height) -> str:
+    def bbox(self):
+        xs, ys = [], []
+        for item in self.items:
+            kind = item[0]
+            if kind == "rect":
+                _, x, y, w, h, _ = item
+                xs += [x, x + w]
+                ys += [y, y + h]
+            elif kind == "line":
+                _, x1, y1, x2, y2, _ = item
+                xs += [x1, x2]
+                ys += [y1, y2]
+            else:
+                _, x, y, txt, fs, anchor, _ = item
+                w = _text_em(txt) * _em(fs)
+                left = {"middle": x - w / 2, "end": x - w}.get(anchor, x)
+                xs += [left, left + w]
+                ys += [y - 0.9 * _em(fs), y + 0.2 * _em(fs)]
+        return min(xs), min(ys), max(xs), max(ys)
+
+    def to_svg(self, margin=MARGIN) -> str:
+        """按内容外接框裁切画布，四周留 margin。"""
         s = SCALE
+        x0, y0, x1, y1 = self.bbox()
+        width, height = x1 - x0 + 2 * margin, y1 - y0 + 2 * margin
+        dx, dy = margin - x0, margin - y0
 
         def n(v):
             return f"{v * s:.2f}".rstrip("0").rstrip(".")
+
+        def nx(v):
+            return n(v + dx)
+
+        def ny(v):
+            return n(v + dy)
 
         out = [
             '<?xml version="1.0" encoding="UTF-8"?>',
@@ -311,19 +360,19 @@ class _Canvas:
             if kind == "rect":
                 _, x, y, w, h, fill = item
                 out.append(
-                    f'<rect x="{n(x)}" y="{n(y)}" width="{n(w)}" height="{n(h)}" fill="{fill}"/>'
+                    f'<rect x="{nx(x)}" y="{ny(y)}" width="{n(w)}" height="{n(h)}" fill="{fill}"/>'
                 )
             elif kind == "line":
-                _, x1, y1, x2, y2, arrow = item
+                _, lx1, ly1, lx2, ly2, arrow = item
                 marker = ' marker-end="url(#arrow)"' if arrow else ""
                 out.append(
-                    f'<line x1="{n(x1)}" y1="{n(y1)}" x2="{n(x2)}" y2="{n(y2)}"{marker}/>'
+                    f'<line x1="{nx(lx1)}" y1="{ny(ly1)}" x2="{nx(lx2)}" y2="{ny(ly2)}"{marker}/>'
                 )
             else:
                 _, x, y, txt, fs, anchor, bold = item
                 weight = ' font-weight="bold"' if bold else ""
                 texts.append(
-                    f'<text x="{n(x)}" y="{n(y)}" font-size="{fs}" text-anchor="{anchor}"{weight}>'
+                    f'<text x="{nx(x)}" y="{ny(y)}" font-size="{fs}" text-anchor="{anchor}"{weight}>'
                     f"{escape(txt)}</text>"
                 )
         out.append("</g>")
@@ -343,133 +392,138 @@ def render_svg(data: dict) -> str:
     manager, custodian = d["manager"], d["custodian"]
     unit = d["unit"]
 
-    n = len(partners)
-    dense = n > 6
-    pw = PARTNER_W_DENSE if dense else PARTNER_W
-    pgap = PARTNER_GAP_DENSE if dense else PARTNER_GAP
+    em9 = _em(9)
 
-    # 文字换行与方框高度
-    p_lines = []
+    def connector_len(labels):
+        """竖向连线长度：放得下旁边的标注文字即可。"""
+        _, h = _block_size(labels, 9)
+        return max(0.45, h + 0.3)
+
+    # 出资人：每个方框宽度按文字自适应，同排统一高度
+    pmax = PARTNER_MAX_W_DENSE if len(partners) > 6 else PARTNER_MAX_W
+    p_boxes, p_labels = [], []
     for p in partners:
-        label = p["name"] + (f"\n（{p['role']}）" if p["role"] else "")
-        p_lines.append(_wrap(label, (pw - 2 * PAD_X) / _em(10)))
-    ph = max([_box_height(ls, 10, PARTNER_H) for ls in p_lines] or [PARTNER_H])
-
-    fund_text = d["fund"]["name"] + (f"\n{d['fund']['form']}" if d["fund"]["form"] else "")
-    fund_lines = _wrap(fund_text, (FUND_W - 2 * PAD_X) / _em(11))
-    fund_h = _box_height(fund_lines, 11, FUND_H)
-
-    def side_lines(side):
-        text = f"{side['title']}\n{side['name']}" if side["title"] else side["name"]
-        if side["code"]:
-            text += f"\n登记编码：{side['code']}"
-        return _wrap(text, (SIDE_W - 2 * PAD_X) / _em(10))
-
-    m_lines = side_lines(manager) if manager else None
-    c_lines = side_lines(custodian) if custodian else None
-    m_h = _box_height(m_lines, 10, MANAGER_H) if manager else 0
-    c_h = _box_height(c_lines, 10, CUSTODIAN_H) if custodian else 0
-
-    k = len(projects)
-    prw = PROJECT_W if k <= 1 else PROJECT_W_MULTI
-    pr_lines = []
-    for p in projects:
-        text = p["name"] + (f"\n{p['note']}" if p["note"] else "")
-        pr_lines.append(_wrap(text, (prw - 2 * PAD_X) / _em(10)))
-    pr_h = max([_box_height(ls, 10, PROJECT_H) for ls in pr_lines] or [PROJECT_H])
-
-    # 画布宽度
-    partners_row = n * pw + max(n - 1, 0) * pgap
-    side_need = max(
-        (SIDE_GAP + SIDE_W) if manager else 0,
-        (SIDE_GAP + SIDE_W) if custodian else 0,
-    )
-    mid_row = FUND_W + 2 * side_need
-    projects_row = k * prw + max(k - 1, 0) * PROJECT_GAP
-    width = max(16.0, partners_row + 2 * MARGIN, mid_row + 2 * MARGIN, projects_row + 2 * MARGIN)
-    cx = width / 2
-
-    # 标题
-    y = 0.35
-    if d["title"]:
-        c.text(cx, y + _em(14), d["title"], 14, bold=True)
-        y += _em(14) + 0.5
-    top_y = y
-
-    # 出资人
-    bus_y = top_y + ph + BOX_TO_BUS
-    start_x = cx - partners_row / 2
-    centers = []
-    for i, (p, lines) in enumerate(zip(partners, p_lines)):
-        x = start_x + i * (pw + pgap)
-        pcx, _ = c.box(x, top_y, pw, ph, lines, 10, GREY if p["highlight"] else "white")
-        centers.append(pcx)
-        c.line(pcx, top_y + ph, pcx, bus_y)
+        text = p["name"] + (f"\n（{p['role']}）" if p["role"] else "")
+        p_boxes.append(_fit_box(text, 10, pmax))
         label = []
         if d["show_ratio"] and p["ratio"] is not None:
             label.append(format_ratio(p["ratio"]))
         if d["show_amount"] and p["amount"] is not None:
             label.append(f"{format_amount(p['amount'])} {unit}".strip())
-        if label:
-            lh = _em(9) * LINE_SPACING
-            last = bus_y - 0.27
-            for j, s in enumerate(label):
-                c.text(pcx - 0.1, last - (len(label) - 1 - j) * lh, s, 9, anchor="end")
+        p_labels.append(label)
+    ph = max((b[2] for b in p_boxes), default=0)
+
+    # 相邻竖线间距要同时容下两侧方框和竖线左侧的比例/金额标注
+    centers = []
+    for i, (_, w, _) in enumerate(p_boxes):
+        if not centers:
+            centers.append(0.0)
+            continue
+        prev_w = p_boxes[i - 1][1]
+        label_w = _block_size(p_labels[i], 9)[0]
+        step = max(prev_w / 2 + BOX_GAP + w / 2, label_w + LABEL_GAP + 0.2)
+        centers.append(centers[-1] + step)
     if centers:
-        c.line(min(centers[0], cx), bus_y, max(centers[-1], cx), bus_y)
+        row_left = centers[0] - p_boxes[0][1] / 2
+        row_right = centers[-1] + p_boxes[-1][1] / 2
+        shift = -(row_left + row_right) / 2
+        centers = [x + shift for x in centers]
+
+    top_y = 0.0
+    bus_y = top_y + ph + connector_len(["0", "0"])
+    for p, (lines, w, _), pcx, label in zip(partners, p_boxes, centers, p_labels):
+        c.box(pcx - w / 2, top_y, w, ph, lines, 10, GREY if p["highlight"] else "white")
+        c.line(pcx, top_y + ph, pcx, bus_y)
+        if label:
+            c.lines_block(pcx - LABEL_GAP, (top_y + ph + bus_y) / 2, label, 9, anchor="end")
+    if centers:
+        c.line(min(centers[0], 0), bus_y, max(centers[-1], 0), bus_y)
 
     # 基金主体 + 管理人 / 托管人
-    mid_h = max(fund_h, m_h, c_h)
-    fund_x = cx - FUND_W / 2
-    fund_top = bus_y + BUS_TO_FUND + (mid_h - fund_h) / 2
+    fund_text = d["fund"]["name"] + (f"\n{d['fund']['form']}" if d["fund"]["form"] else "")
+    fund_lines, fund_w, fund_h = _fit_box(fund_text, 11, FUND_MAX_W)
+
+    def side_box(side):
+        text = f"{side['title']}\n{side['name']}" if side["title"] else side["name"]
+        if side["code"]:
+            text += f"\n登记编码：{side['code']}"
+        return _fit_box(text, 10, SIDE_MAX_W)
+
+    def side_gap(label):
+        return max(0.9, _text_em(label or "") * em9 + 0.5)
+
+    m_box = side_box(manager) if manager else None
+    c_box = side_box(custodian) if custodian else None
+    mid_h = max([fund_h] + [b[2] for b in (m_box, c_box) if b])
+    fund_top = (bus_y + BUS_TO_FUND if centers else top_y) + (mid_h - fund_h) / 2
     fcy = fund_top + fund_h / 2
+    fund_x = -fund_w / 2
     if centers:
-        c.line(cx, bus_y, cx, fund_top)
-    c.box(fund_x, fund_top, FUND_W, fund_h, fund_lines, 11, GREY)
+        c.line(0, bus_y, 0, fund_top)
+    c.box(fund_x, fund_top, fund_w, fund_h, fund_lines, 11, GREY)
 
     if manager:
-        mx = fund_x - SIDE_GAP - SIDE_W
-        c.box(mx, fcy - m_h / 2, SIDE_W, m_h, m_lines, 10)
-        c.line(mx + SIDE_W, fcy, fund_x, fcy, arrow=True)
+        lines, w, h = m_box
+        gap = side_gap(manager["label"])
+        mx = fund_x - gap - w
+        c.box(mx, fcy - h / 2, w, h, lines, 10)
+        c.line(mx + w, fcy, fund_x, fcy, arrow=True)
         if manager["label"]:
-            c.text(fund_x - SIDE_GAP / 2, fcy - 0.12, manager["label"], 9)
+            c.text(fund_x - gap / 2, fcy - 0.1, manager["label"], 9)
     if custodian:
-        rx = fund_x + FUND_W + SIDE_GAP
-        c.box(rx, fcy - c_h / 2, SIDE_W, c_h, c_lines, 10)
-        c.line(rx, fcy, fund_x + FUND_W, fcy, arrow=True)
+        lines, w, h = c_box
+        gap = side_gap(custodian["label"])
+        rx = fund_x + fund_w + gap
+        c.box(rx, fcy - h / 2, w, h, lines, 10)
+        c.line(rx, fcy, fund_x + fund_w, fcy, arrow=True)
         if custodian["label"]:
-            c.text(fund_x + FUND_W + SIDE_GAP / 2, fcy - 0.12, custodian["label"], 9)
+            c.text(fund_x + fund_w + gap / 2, fcy - 0.1, custodian["label"], 9)
 
-    bottom = fcy + mid_h / 2
     fund_bottom = fund_top + fund_h
+    mid_bottom = fcy + mid_h / 2
 
     # 底层项目
+    k = len(projects)
+    prmax = PROJECT_MAX_W if k <= 1 else PROJECT_MAX_W_MULTI
+    pr_boxes = [_fit_box(p["name"] + (f"\n{p['note']}" if p["note"] else ""), 10, prmax) for p in projects]
+    pr_h = max((b[2] for b in pr_boxes), default=0)
     if k == 1:
         p = projects[0]
-        ptop = bottom + FUND_TO_PROJECT
-        c.box(cx - prw / 2, ptop, prw, pr_h, pr_lines[0], 10)
-        c.line(cx, fund_bottom, cx, ptop, arrow=True)
+        lines, w, _ = pr_boxes[0]
         labels = [s for s in (d["project_label"], p["label"]) if s]
+        ptop = max(fund_bottom + connector_len(labels), mid_bottom + 0.3)
+        c.box(-w / 2, ptop, w, pr_h, lines, 10)
+        c.line(0, fund_bottom, 0, ptop, arrow=True)
         if labels:
-            c.lines_block(cx + 0.2, (fund_bottom + ptop) / 2, labels, 9, anchor="start")
-        bottom = ptop + pr_h
+            c.lines_block(LABEL_GAP + 0.04, (fund_bottom + ptop) / 2, labels, 9, anchor="start")
     elif k > 1:
-        pbus = bottom + 0.75
-        ptop = pbus + 0.9
-        c.line(cx, fund_bottom, cx, pbus)
-        if d["project_label"]:
-            c.lines_block(cx + 0.2, (fund_bottom + pbus) / 2, [d["project_label"]], 9, anchor="start")
-        start = cx - projects_row / 2
+        trunk = [d["project_label"]] if d["project_label"] else []
+        pbus = max(fund_bottom + connector_len(trunk), mid_bottom + 0.3)
+        ptop = pbus + connector_len([p["label"] for p in projects if p["label"]][:1])
+        c.line(0, fund_bottom, 0, pbus)
+        if trunk:
+            c.lines_block(LABEL_GAP + 0.04, (fund_bottom + pbus) / 2, trunk, 9, anchor="start")
         pcs = []
-        for i, (p, lines) in enumerate(zip(projects, pr_lines)):
-            x = start + i * (prw + PROJECT_GAP)
-            pcx, _ = c.box(x, ptop, prw, pr_h, lines, 10)
-            pcs.append(pcx)
+        for i, (_, w, _) in enumerate(pr_boxes):
+            if not pcs:
+                pcs.append(0.0)
+                continue
+            prev_w = pr_boxes[i - 1][1]
+            label_w = _text_em(projects[i - 1]["label"]) * em9
+            step = max(prev_w / 2 + BOX_GAP + w / 2, label_w + LABEL_GAP + 0.3)
+            pcs.append(pcs[-1] + step)
+        shift = -((pcs[0] - pr_boxes[0][1] / 2) + (pcs[-1] + pr_boxes[-1][1] / 2)) / 2
+        pcs = [x + shift for x in pcs]
+        for p, (lines, w, _), pcx in zip(projects, pr_boxes, pcs):
+            c.box(pcx - w / 2, ptop, w, pr_h, lines, 10)
             c.line(pcx, pbus, pcx, ptop, arrow=True)
             if p["label"]:
-                c.lines_block(pcx + 0.12, (pbus + ptop) / 2, [p["label"]], 9, anchor="start")
-        c.line(min(pcs[0], cx), pbus, max(pcs[-1], cx), pbus)
-        bottom = ptop + pr_h
+                c.lines_block(pcx + LABEL_GAP, (pbus + ptop) / 2, [p["label"]], 9, anchor="start")
+        c.line(min(pcs[0], 0), pbus, max(pcs[-1], 0), pbus)
 
-    height = bottom + 0.45
-    return c.to_svg(width, height)
+    # 标题居中于整幅内容之上
+    if d["title"]:
+        x0, y0, x1, _ = c.bbox()
+        c.text((x0 + x1) / 2, y0 - TITLE_GAP, d["title"], 14, bold=True)
+
+    return c.to_svg()
