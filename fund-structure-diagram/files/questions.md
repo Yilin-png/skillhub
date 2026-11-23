@@ -12,6 +12,7 @@ agent 在对话中按此顺序提问，答案写成 YAML/JSON 后用 `scripts/re
 | 2 | 组织形式（方框第二行） | `fund.form` | 合伙型→合伙企业（有限合伙）；公司型→有限责任公司；契约型→契约型私募基金 |
 | 3…n | 第 i 位出资人：名称、身份（仅合伙型：GP / LP）、认缴金额 | `partners[i].name / role / amount` | 首位默认 GP；按录入顺序自左向右；图上显示为「普通合伙人」「有限合伙人」 |
 | 3…n | 还有其他出资人吗？ | — | 每次展示已录入表与合计金额 |
+| 3…n | 该出资人是否为未在中基协备案的有限合伙企业？是则继续问它的上层出资人（名称、身份、认缴金额），上层里还有未备案有限合伙就再往上问一层 | `partners[i].unregistered` 与嵌套的 `partners` | 否；穿透层比例按该层金额单独计算 |
 | 4 | 是否画基金管理人；名称；登记编码；连线标注 | `manager.name / code / label` | 是；编码以 P 开头；受托管理 |
 | 5 | 是否画托管银行；名称；连线标注 | `custodian.name / label` | 是；资金托管 |
 | 6 | 是否画底层项目；项目连线标注 | `project_label` | 是；项目投资 |
@@ -25,6 +26,19 @@ agent 在对话中按此顺序提问，答案写成 YAML/JSON 后用 `scripts/re
 - 公司型 / 契约型的出资人不写 `role`（方框里不显示括号身份）；需要灰底强调时写 `highlight: true`。
 - 不画托管人 / 管理人：删掉对应键；不画项目：`projects: []`。
 - 用户说「同参考稿」「示例」时直接用 `examples/amac_sample.yaml`。
+- 出资人是未备案有限合伙企业时必须穿透：在该出资人下嵌套 `partners`，并写 `unregistered: true`。只写了上层出资人、没写标记，也会画出穿透层。上层出资人的比例按他们自己的金额计算，不并入基金本层。
+
+穿透一层的写法：
+
+```yaml
+- name: 某某投资合伙企业（有限合伙）
+  role: LP
+  amount: 3000
+  unregistered: true
+  partners:
+    - {name: 甲公司, role: GP, amount: 30}
+    - {name: 乙公司, role: LP, amount: 2970}
+```
 
 最终数据形如：
 

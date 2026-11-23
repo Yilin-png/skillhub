@@ -115,6 +115,47 @@ class RendererTests(unittest.TestCase):
             if r.get("y") != rows[0]:
                 self.assertFalse(x < trunk_x < x + w, "主干穿过了方框")
 
+    def test_look_through_unregistered_partnership(self):
+        """未备案有限合伙在本层方框上方再挂一层上层出资人，方框与本层同大。"""
+        data = {
+            "fund": {"name": "F 基金", "form": "合伙企业（有限合伙）"},
+            "partners": [
+                {"name": "甲公司", "role": "GP", "amount": 100},
+                {
+                    "name": "未备案合伙企业", "role": "LP", "amount": 900, "unregistered": True,
+                    "partners": [
+                        {"name": "上层普通合伙人", "role": "GP", "amount": 90},
+                        {"name": "上层有限合伙人", "role": "LP", "amount": 810},
+                    ],
+                },
+            ],
+            "projects": [],
+        }
+        self.assertEqual(fund_svg.check(data), [])
+        texts, root = svg_texts(fund_svg.render_svg(data))
+        self.assertIn("上层普通合伙人", texts)
+        self.assertIn("10.00%", texts)   # 90 / 900
+        self.assertIn("90.00%", texts)
+        rects = list(root.iter(f"{SVG_NS}rect"))[1:]
+        by_text = {}
+        text_els = list(root.iter(f"{SVG_NS}text"))
+        for r in rects:
+            x, y, w, h = (float(r.get(k)) for k in ("x", "y", "width", "height"))
+            inside = [t.text for t in text_els if x < float(t.get("x")) < x + w and y < float(t.get("y")) < y + h]
+            by_text.setdefault(inside[0], []).append((y, w, h))
+        upper = by_text["上层普通合伙人"][0]
+        host = by_text["未备案合伙企业"][0]
+        peer = by_text["甲公司"][0]
+        self.assertLess(upper[0], host[0], "穿透层在被穿透方框上方")
+        self.assertEqual(upper[1:], host[1:])
+        self.assertEqual(host[1:], peer[1:])
+
+        missing = fund_svg.check({"fund": "F", "partners": [
+            {"name": "甲", "role": "GP", "amount": 1},
+            {"name": "某合伙企业", "role": "LP", "amount": 1, "unregistered": True},
+        ], "projects": []})
+        self.assertTrue(any("上层出资人" in m for m in missing))
+
     def test_balanced_wrap(self):
         lines = fund_svg._wrap("上海某某私募基金管理有限公司", 13)
         self.assertEqual(lines, ["上海某某私募基", "金管理有限公司"])
@@ -139,7 +180,7 @@ class RendererTests(unittest.TestCase):
                                "partners": [{"name": "A", "role": "LP", "ratio": 50}],
                                "manager": {"name": "G", "code": "X1"}})
         self.assertTrue(any("100%" in m for m in msgs))
-        self.assertTrue(any("GP" in m for m in msgs))
+        self.assertTrue(any("普通合伙人" in m for m in msgs))
         self.assertTrue(any("P 开头" in m for m in msgs))
 
     def test_long_names_wrap_inside_box(self):
