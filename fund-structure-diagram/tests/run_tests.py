@@ -54,13 +54,64 @@ class RendererTests(unittest.TestCase):
         self.assertEqual(fund_svg.check(data), [])
         texts, root = svg_texts(fund_svg.render_svg(data))
         for expected in ["中基协备案基金架构图（示例）", "1.00%", "500 万元", "40.00%", "20,000 万元",
-                         "（GP）", "受托管理", "资金托管", "项目投资", "登记编码：P1000000", "底层项目"]:
+                         "（普通合伙人）", "受托管理", "资金托管", "项目投资", "登记编码：P1000000", "底层项目"]:
             self.assertIn(expected, texts)
         greys = [r for r in root.iter(f"{SVG_NS}rect") if r.get("fill") == fund_svg.GREY]
         self.assertEqual(len(greys), 2, "GP 与基金主体灰底")
         arrows = [l for l in root.iter(f"{SVG_NS}line") if l.get("marker-end")]
         self.assertEqual(len(arrows), 3)
-        self.assertEqual(root.get("width"), "1152")
+        self.assertEqual(root.get("viewBox"), f"0 0 {root.get('width')} {root.get('height')}")
+
+    def test_boxes_harmonized(self):
+        """出资人方框同宽同高、以最长文字 + PAD 为准；其余方框不小于它；中排三框同高。"""
+        texts, root = svg_texts(fund_svg.render_svg(load_example("amac_sample.yaml")))
+        rects = [tuple(float(r.get(k)) for k in ("x", "y", "width", "height"))
+                 for r in list(root.iter(f"{SVG_NS}rect"))[1:]]
+        partners, (fund, manager, custodian, project) = rects[:5], rects[5:]
+        self.assertEqual({(w, h) for _, _, w, h in partners}, {partners[0][2:]})
+        base_w, base_h = partners[0][2:]
+
+        s = fund_svg.SCALE
+        widest = max(fund_svg._text_em(t) for t in texts if t in ("A 合伙企业", "（普通合伙人）", "（有限合伙人）"))
+        self.assertAlmostEqual(base_w, widest * 10 + 2 * fund_svg.PAD_X * s, delta=1.0)
+
+        for _, _, w, h in (fund, manager, custodian, project):
+            self.assertGreaterEqual(w, base_w - 0.01)
+            self.assertGreaterEqual(h, base_h - 0.01)
+        self.assertEqual(fund[3], manager[3])
+        self.assertEqual(fund[3], custodian[3])
+
+    def test_role_text_and_songti_only(self):
+        texts, root = svg_texts(fund_svg.render_svg(load_example("amac_sample.yaml")))
+        self.assertIn("（普通合伙人）", texts)
+        self.assertIn("（有限合伙人）", texts)
+        self.assertNotIn("（GP）", texts)
+        family = root.get("font-family")
+        for sans in ("Sans", "Hei", "YaHei"):
+            self.assertNotIn(sans, family)
+        self.assertTrue(family.startswith("SimSun"))
+
+    def test_given_ratio_precision_kept(self):
+        self.assertEqual(fund_svg.format_ratio("0.61069%"), "0.61069%")
+        self.assertEqual(fund_svg.format_ratio("6.1"), "6.10%")
+
+    def test_many_partners_split_rows_and_trunk_clear(self):
+        partners = [{"name": f"第{i}号有限公司", "role": "LP", "amount": 100} for i in range(13)]
+        texts, root = svg_texts(fund_svg.render_svg({"fund": "F", "partners": partners, "projects": []}))
+        rects = list(root.iter(f"{SVG_NS}rect"))[1:]
+        rows = sorted({r.get("y") for r in rects[:-1]}, key=float)
+        self.assertEqual(len(rows), 3)  # 13 位、每排至多 6 位 → 5/4/4
+        # 竖向主干（x = 基金中心）不得穿过任何出资人方框
+        fund = rects[-1]
+        trunk_x = float(fund.get("x")) + float(fund.get("width")) / 2
+        for r in rects[:-1]:
+            x, w = float(r.get("x")), float(r.get("width"))
+            if r.get("y") != rows[0]:
+                self.assertFalse(x < trunk_x < x + w, "主干穿过了方框")
+
+    def test_balanced_wrap(self):
+        lines = fund_svg._wrap("上海某某私募基金管理有限公司", 13)
+        self.assertEqual(lines, ["上海某某私募基", "金管理有限公司"])
 
     def test_multi_project_and_dense_partners(self):
         data = load_example("multi_project.yaml")
