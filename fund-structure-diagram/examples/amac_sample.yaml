@@ -1,0 +1,22 @@
+# 复刻参考稿「中基协备案基金架构图（示例）」
+title: 中基协备案基金架构图（示例）
+unit: 万元
+fund:
+  name: F 基金
+  form: 合伙企业（有限合伙）
+partners:            # 自左向右排列；ratio 省略时按 amount 自动计算
+  - {name: A 合伙企业, role: GP, amount: 500}
+  - {name: B 合伙企业, role: LP, amount: 4500}
+  - {name: C 公司, role: LP, amount: 10000}
+  - {name: D 公司, role: LP, amount: 15000}
+  - {name: E 公司, role: LP, amount: 20000}
+manager:
+  name: G 公司
+  code: P1000000
+  label: 受托管理
+custodian:
+  name: H 银行
+  label: 资金托管
+project_label: 项目投资
+projects:
+  - name: 底层项目

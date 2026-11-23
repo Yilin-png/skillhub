@@ -1,0 +1,20 @@
+# 多出资人、多项目、无托管的变体
+title: 某产业基金架构图
+fund:
+  name: 苏州某某创业投资合伙企业
+  form: 合伙企业（有限合伙）
+partners:
+  - {name: 上海某某私募基金管理有限公司, role: GP, amount: 100}
+  - {name: 某某市政府引导基金, role: LP, amount: 3000}
+  - {name: 某某产业集团有限公司, role: LP, amount: 2900}
+  - {name: 张三, role: LP, amount: 1000}
+  - {name: 李四, role: LP, amount: 1000}
+  - {name: 某某投资有限公司, role: LP, amount: 1000}
+  - {name: 某某科技股份有限公司, role: LP, amount: 1000}
+manager:
+  name: 上海某某私募基金管理有限公司
+  code: P1012345
+projects:
+  - {name: 甲科技有限公司, label: 持股 10%}
+  - {name: 乙医疗有限公司, note: （拟投）, label: 持股 8%}
+  - {name: 丙新材料有限公司, label: 持股 5.5%}
