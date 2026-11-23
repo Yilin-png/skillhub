@@ -5,6 +5,8 @@ description: >-
   private variable files, or when regenerating an agreement from templated
   parties. Prefer legal-relationship modeling: map parties/roles/instruments
   first, then nest Jinja paths so variables mirror the transaction graph.
+  Iron rule: process source text and private vars only on local-deployed models
+  (Mac Mini Ollama); never send them to cloud models.
 ---
 # Legal redaction to Jinja2
 
@@ -12,6 +14,16 @@ description: >-
 Turn a Chinese legal Word/text file into a reusable Jinja2 template plus a private vars file. Keep real identities off shared templates.
 
 核心不只是「把专有名词换成占位符」，而是用**法律思维**建一张可复用的**主体关系图**，再落到嵌套 Jinja 路径：谁对谁、以什么身份、就什么标的、通过什么载体。
+
+## 铁律：优先本地部署模型
+
+涉及原文、实体抽取、关系建模、变量升格、抽检辅助时：
+
+1. **优先且默认**使用 Mac Mini 上本地部署的模型（Ollama），在本地完成读源、推理与写回。
+2. **禁止**把源文书正文、`*.vars.yaml`、未脱敏片段、真实专名清单发给云端模型（含对话里的云端 Agent / 托管 API）。
+3. 云端 Agent 只可接触：**已脱敏**的 Jinja 模板、`*.vars.example.yaml`、不含真实值的关系摘要或 inventory 结构说明。
+4. 本地模型不可用时：停用自动实体辅助，改走规则脚本 + 人工标注；**不得**降级到云端「先处理再说」。
+5. 交付前仍须人工复核；本地模型会漏检，铁律解决的是数据出境，不是免检。
 
 ## Legal relationship modeling（先于命名）
 
@@ -98,7 +110,7 @@ Fallback 计数器（`companies.company01` 等）**仅用于**关系图仍无法
 - Preserve unless asked otherwise: amounts, dates, ratios, durations, statute citations, clause structure, generic legal terms (转让方/受让方/标的公司 as role words, 有限责任公司, 股份有限公司, etc.).
 - Same real entity → same Jinja path across the whole document.
 - Prefer semantic, **relationship-nested** paths (见上)；计数器仅作 fallback。
-- Do not send source text or `*.vars.yaml` to cloud models. Use the Mac Mini local Ollama model when entity assist is needed.
+- **铁律**：实体辅助与原文处理优先本地 Ollama；源文与 `*.vars.yaml` 永不进云端（详见上节）。
 - Never attach or paste the private vars file into chat; only the template and `*.vars.example.yaml`.
 
 ## Toolkit location
@@ -109,8 +121,8 @@ On the home Mac Mini:
 - `render_jinja.py` — template + vars → filled text (round-trip check)
 
 ## Steps
-1. Save the source docx/txt into a working folder on the Mac Mini.
-2. **先建模再跑脚本**：写出文书类型、角色清单、主体关系草图（可记在 `inventory` 备注或本地笔记）；决定语义路径骨架。
+1. Save the source docx/txt into a working folder on the Mac Mini（源文件不出本机）。
+2. **先建模再跑脚本**：写出文书类型、角色清单、主体关系草图（可记在 `inventory` 备注或本地笔记）；决定语义路径骨架。需要模型辅助时**只用本地 Ollama**。
 3. Run:
    `python3 ~/Documents/redact-trial/toolkit/redact_to_jinja.py --input <source.docx> --rules ~/Documents/redact-trial/toolkit/rules.yaml --out-dir <out> --stem <name>`
 4. Outputs:
