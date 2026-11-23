@@ -1,0 +1,42 @@
+# PE/VC 法律尽调股权架构图（虚构）
+title: 星澜科技股权架构图
+as_of: 2026年9月30日
+unit: 万元
+target:
+  name: 星澜科技有限公司
+  form: 有限责任公司
+  capital: 1000
+shareholders:
+  - name: 张三
+    role: 实际控制人
+    ratio: 15
+    amount: 150
+  - name: 星澜控股有限公司
+    form: 有限责任公司
+    ratio: 55
+    amount: 550
+    shareholders:
+      - name: 张三
+        role: 实际控制人
+        ratio: 80
+        amount: 800
+        voting: 100
+      - name: 李四
+        ratio: 20
+        amount: 200
+        note: 所持股权已质押
+  - name: 星澜员工持股平台
+    form: 有限合伙
+    ratio: 20
+    amount: 200
+    shareholders:
+      - {name: 张三, role: GP, ratio: 1, amount: 2}
+      - {name: 王某, role: LP, ratio: 40, amount: 80}
+      - {name: 其他员工, role: LP, ratio: 59, amount: 118}
+  - name: 清源资本有限公司
+    form: 有限责任公司
+    ratio: 10
+    amount: 100
+subsidiaries:
+  - {name: 星澜北京科技有限公司, form: 有限责任公司, ratio: 100, note: 全资子公司}
+  - {name: 星澜深圳科技有限公司, form: 有限责任公司, ratio: 70}

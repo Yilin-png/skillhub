@@ -10,6 +10,7 @@ Yilin 的 Agent Skills 仓库：从 Grok Bot 各助手收集、可复用的技�
 | [pandoc-format-converter](./pandoc-format-converter/) | 中文法律/商务文书 → Pandoc Markdown → Word 样式映射 |
 | [pandoc-html-docx](./pandoc-html-docx/) | Markdown（含 HTML 合并单元格表格）一键导出 Word |
 | [fund-structure-diagram](./fund-structure-diagram/) | 对话问答收集基金/GP/LP/管理人/托管/项目信息，生成中基协备案风格基金架构图 SVG |
+| [equity-structure-diagram](./equity-structure-diagram/) | 对话问答收集标的公司、股东穿透与子公司，生成 PE/VC 法律尽调风格股权架构图 SVG |
 | [lpa-review](./lpa-review/) | 人民币私募基金 LPA（有限合伙协议）结构化审核：12 模块勾对清单 + 25 篇专题参考文稿 |
 
 每个子目录是一个独立 skill，入口为 `SKILL.md`。
